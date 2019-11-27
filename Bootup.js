@@ -36,7 +36,7 @@ Params.DrawColour = true;
 Params.DrawHeight = true;
 Params.BigImage = false;
 Params.DrawStepHeat = false;
-Params.TerrainHeightScalar = 1.70;
+Params.TerrainHeightScalar = 5.70;
 Params.PositionToHeightmapScale = 0.009;
 Params.Fov = 52;
 Params.BrightnessMult = 1.8;
@@ -51,7 +51,6 @@ ParamsWindow.AddParam('DrawStepHeat');
 ParamsWindow.AddParam('BigImage');
 ParamsWindow.AddParam('TerrainHeightScalar',0.001,5);
 ParamsWindow.AddParam('PositionToHeightmapScale',0,1);
-ParamsWindow.AddParam('TerrainHeightScalar',0,5);
 ParamsWindow.AddParam('Fov',10,90);
 ParamsWindow.AddParam('BrightnessMult',0,3);
 ParamsWindow.AddParam('HeightMapStepBack',0,1);
@@ -129,6 +128,18 @@ function Render(RenderTarget)
 	{
 		MoonHeightmap = new Pop.Image(HeightmapFilename);
 		MoonHeightmap.SetLinearFilter(true);
+		//	find min/max
+		let Min = undefined;
+		let Max = undefined;
+		function GetMinMax(Value,Index)
+		{
+			if ( (Index % 4) == 3 )
+				return;
+			Min = Math.min( Min, Value ) || Value;
+			Max = Math.max( Max, Value ) || Value;
+		}
+		MoonHeightmap.Pixels.forEach( GetMinMax );
+		Pop.Debug(`Heightmap min=${Min} max=${Max}`);
 	}
 	
 	let MoonColour;
@@ -192,11 +203,14 @@ function Render(RenderTarget)
 //	window now shared from bootup
 const Window = new Pop.Opengl.Window("Lunar");
 
+const FpsCounter = new Pop.FrameCounter("fps");
+
 Window.OnRender = function(RenderTarget)
 {
 	try
 	{
 		Render(RenderTarget);
+		FpsCounter.Add();
 	}
 	catch(e)
 	{

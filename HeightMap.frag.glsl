@@ -15,6 +15,9 @@ uniform bool DrawStepHeat;
 uniform float BrightnessMult;
 uniform float HeightMapStepBack;
 
+//	get this from the original image
+const float2 HeightmapRange = float2( 8.0/255.0, 160.0/255.0 );
+
 const float4 MoonSphere = float4(0,0,0,10);
 
 struct TRay
@@ -129,6 +132,10 @@ float atan2(float x,float y)
 	return atan( y, x );
 }
 
+float Range(float Min,float Max,float Value)
+{
+	return (Value-Min) / (Max-Min);
+}
 
 //	https://github.com/SoylentGraham/PopUnityCommon/blob/master/PopCommon.cginc#L298
 float2 ViewToEquirect(float3 View3)
@@ -149,7 +156,8 @@ void GetMoonHeight(float3 MoonNormal,out float Height)
 	float2 HeightmapUv = ViewToEquirect( MoonNormal );
 	
 	Height = texture2D( HeightmapTexture, HeightmapUv ).x;
-
+	Height = Range( HeightmapRange.x, HeightmapRange.y, Height );
+	//Height = 1.0;
 	//	debug uv
 	//Colour = float3( HeightmapUv, 0.5 );
 	
@@ -249,16 +257,61 @@ float3 NormalToRedGreen(float Normal)
 	}
 }
 
+bool IsRayIntersectsSphere(float4 Sphere,TRay Ray)
+{
+	vec3 oc = Ray.Pos - Sphere.xyz;
+	float SphereRadius = Sphere.w;
+	
+	float a = dot( Ray.Dir, Ray.Dir );
+	float b = dot( oc, Ray.Dir );
+	float c = dot( oc, oc) - SphereRadius * SphereRadius;
+	float discriminant = b*b - a*c;
+	if (discriminant <= 0.0)
+		return false;
+	
+	float MaxDistance = 999999.0;//SphereRadius*SphereRadius
+	
+	float temp = (-b - sqrt(b*b-a*c)) /a;
+	if (temp <= MaxDistance && temp > 0.0)
+	{
+		return true;
+	}
+	temp = (-b + sqrt(b*b-a*c)) /a;
+	if (temp <= MaxDistance && temp > 0.0)
+	{
+		return true;
+	}
+	return false;
+}
+#define RAY_MISS_SPHERE	(-2.0)
 
+float3 GetSphereNormal(TRay Ray)
+{
+	
+}
 
 //	returns intersction pos, w=success
 float4 RayMarchSpherePos(TRay Ray,out float StepHeat)
 {
+	float3 Normal = GetSphereNormal( Ray );
+	return float4( Normal, 1.0 );
+	
+	//	early exit, if we just missed the sphere regardless
+	//	gr: makes very little difference on imac
+	if ( true )
+	{
+		float4 Sphere = float4( MoonSphere.xyz, MoonSphere.w + TerrainHeightScalar );
+		if ( !IsRayIntersectsSphere( Sphere, Ray ) )
+		{
+			return float4(0,0,0,RAY_MISS_SPHERE);
+		}
+	}
+	
 	const float MinDistance = 0.001;
 	const float CloseEnough = MinDistance;
 	const float MinStep = MinDistance;
 	const float MaxDistance = 100.0;
-	const int MaxSteps = 50;
+	const int MaxSteps = 40;
 	
 	float RayTime = 0.01;
 	
@@ -299,8 +352,14 @@ void main()
 	
 	float StepHeat;
 	float4 SphereColour = RayMarchSphere( Ray, StepHeat );
+	
 	if ( DrawStepHeat )
+	{
 		SphereColour.xyz = NormalToRedGreen( 1.0 - StepHeat );
+		//	show misses
+		if ( SphereColour.w <= RAY_MISS_SPHERE )
+			SphereColour = float4(0,0,1,1);
+	}
 	/*
 	float3 Intersection;
 	float t = 0.0;
