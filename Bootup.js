@@ -16,20 +16,10 @@ const Earth = Pop.GetExeArguments().Earth;
 const EnableImages = Pop.GetExeArguments().EnableImages!==false;
 //const EnableImages = false;
 
-const RenderHeightmapShader = RegisterShaderAssetFilename('HeightMap.frag.glsl','Quad.vert.glsl');
+const Geo_Colour_Shader = RegisterShaderAssetFilename('Colour.frag.glsl','Geo.vert.glsl');
 
-//const ColourFilename = 'Earth_ColourMay_4096.jpg';
-//const ColourFilename = 'lroc_color_poles_4k.jpg';
-//const ColourFilename = 'Moon_Colour_1024x512.jpg';
-const ColourFilename = 'Moon_Colour_2048x1024.jpg';
-
-//const HeightmapFilename = 'Earth_Heightmap_4096.png';
-//const HeightmapFilename = 'ldem_16_uint.jpg';
-//const HeightmapFilename = 'Moon_Depth_1024x512.jpg';
-const HeightmapFilename = 'Moon_Depth_2048x1024.jpg';
-
-Pop.AsyncCacheAssetAsString('HeightMap.frag.glsl');
-Pop.AsyncCacheAssetAsString('Quad.vert.glsl');
+Pop.AsyncCacheAssetAsString('Colour.frag.glsl');
+Pop.AsyncCacheAssetAsString('Geo.vert.glsl');
 
 
 
@@ -50,7 +40,7 @@ Params.AmbientOcclusionMax = 0.66;
 Params.TextureSampleColourMult = 1.41;
 Params.TextureSampleColourAdd = 0.1;
 Params.BaseColour = [0.91,0.85,0.75];
-Params.BackgroundColour = [0,0,0];
+Params.BackgroundColour = [0,0.5,1];
 Params.TerrainHeightScalar = 0.074;
 Params.Fov = 52;
 Params.BrightnessMult = 1.8;
@@ -150,6 +140,75 @@ Pop.CreateColourTexture = function(Colour4)
 }
 
 
+AssetFetchFunctions['Cube'] = CreateCubeGeometry;
+
+function CreateCubeGeometry(RenderTarget,Min=-1,Max=1)
+{
+	let VertexSize = 3;
+	let VertexData = [];
+	let TriangleIndexes = [];
+	
+	let AddTriangle = function(a,b,c)
+	{
+		let FirstTriangleIndex = VertexData.length / VertexSize;
+		
+		a.forEach( v => VertexData.push(v) );
+		b.forEach( v => VertexData.push(v) );
+		c.forEach( v => VertexData.push(v) );
+		
+		TriangleIndexes.push( FirstTriangleIndex+0 );
+		TriangleIndexes.push( FirstTriangleIndex+1 );
+		TriangleIndexes.push( FirstTriangleIndex+2 );
+	}
+	
+	let tln = [Min,Min,Min];
+	let trn = [Max,Min,Min];
+	let brn = [Max,Max,Min];
+	let bln = [Min,Max,Min];
+	let tlf = [Min,Min,Max];
+	let trf = [Max,Min,Max];
+	let brf = [Max,Max,Max];
+	let blf = [Min,Max,Max];
+	
+	
+	//	near
+	AddTriangle( tln, trn, brn );
+	AddTriangle( brn, bln, tln );
+	//	far
+	AddTriangle( trf, tlf, blf );
+	AddTriangle( blf, brf, trf );
+	
+	//	top
+	AddTriangle( tln, tlf, trf );
+	AddTriangle( trf, trn, tln );
+	//	bottom
+	AddTriangle( bln, blf, brf );
+	AddTriangle( brf, brn, bln );
+	
+	//	left
+	AddTriangle( tlf, tln, bln );
+	AddTriangle( bln, blf, tlf );
+	//	right
+	AddTriangle( trn, trf, brf );
+	AddTriangle( brf, brn, trn );
+	
+	const VertexAttributeName = "LocalPosition";
+	
+	//	loads much faster as a typed array
+	VertexData = new Float32Array( VertexData );
+	TriangleIndexes = new Int32Array(TriangleIndexes);
+	
+	//	emulate webgl on desktop
+	TriangleIndexes = undefined;
+	
+	let TriangleBuffer = new Pop.Opengl.TriangleBuffer( RenderTarget, VertexAttributeName, VertexData, VertexSize, TriangleIndexes );
+	return TriangleBuffer;
+}
+
+
+
+
+
 const MoonApp = new TMoonApp();
 
 
@@ -171,12 +230,51 @@ async function LoadAssets()
 LoadAssets();
 
 
+class Actor
+{
+	constructor(Geometry,Shader,Colour=[0.7,0.9,0.1])
+	{
+		this.Geometry = Geometry;
+		this.Shader = Shader;
+		this.Uniforms = {};
+		this.Uniforms.Colour = Colour;
+		this.Position = [0,0,0];
+	}
+}
+
+function RenderActor(RenderTarget,Camera,Actor)
+{
+	const RenderContext = RenderTarget.GetRenderContext();
+	const Geometry = GetAsset(Actor.Geometry,RenderContext);
+	const Shader = GetAsset(Actor.Shader,RenderContext);
+	
+	const WorldToCameraMatrix = Camera.GetWorldToCameraMatrix();
+	const CameraProjectionMatrix = Camera.GetProjectionMatrix( RenderTarget.GetRenderTargetRect() );
+	const ScreenToCameraTransform = Math.MatrixInverse4x4( CameraProjectionMatrix );
+	const CameraToWorldTransform = Math.MatrixInverse4x4( WorldToCameraMatrix );
+	
+	const LocalToWorldTransform = Math.CreateTranslationMatrix(Actor.Position);
+	
+	const SetUniforms = function(Shader)
+	{
+		Shader.SetUniform('CameraProjectionTransform',CameraProjectionMatrix);
+		Shader.SetUniform('LocalToWorldTransform',LocalToWorldTransform);
+		Shader.SetUniform('WorldToCameraTransform',WorldToCameraMatrix);
+		
+		function SetUniform(Key)
+		{
+			Shader.SetUniform( Key, this[Key] );
+		}
+		Object.keys(Params).forEach(SetUniform.bind(Params));
+		Object.keys(Actor.Uniforms).forEach(SetUniform.bind(Actor.Uniforms));
+	}
+	//RenderTarget.SetBlendModeAlpha();
+	RenderTarget.DrawGeometry( Geometry, Shader, SetUniforms );
+}
 	
 	
 function Render(RenderTarget,Camera)
 {
-	const RenderContext = RenderTarget.GetRenderContext();
-	
 	if ( !Params.DebugClearEyes )
 		RenderTarget.ClearColour( ...Params.BackgroundColour );
 	else if ( Camera.Name == 'left' )
@@ -188,42 +286,9 @@ function Render(RenderTarget,Camera)
 	else
 		RenderTarget.ClearColour( 1,0,1 );
 	
-	const Quad = GetAsset('Quad',RenderContext);
-	const Shader = GetAsset(RenderHeightmapShader,RenderContext);
-	const WorldToCameraMatrix = Camera.GetWorldToCameraMatrix();
-	const CameraProjectionMatrix = Camera.GetProjectionMatrix( RenderTarget.GetRenderTargetRect() );
-	const ScreenToCameraTransform = Math.MatrixInverse4x4( CameraProjectionMatrix );
-	const CameraToWorldTransform = Math.MatrixInverse4x4( WorldToCameraMatrix );
-	const LocalToWorldTransform = Camera.GetLocalToWorldFrustumTransformMatrix();
-	//const LocalToWorldTransform = Math.CreateIdentityMatrix();
-	const WorldToLocalTransform = Math.MatrixInverse4x4(LocalToWorldTransform);
-	//Pop.Debug("Camera frustum LocalToWorldTransform",LocalToWorldTransform);
-	//Pop.Debug("Camera frustum WorldToLocalTransform",WorldToLocalTransform);
 	
-	//	these should be GetAsset
-	const Colour = MoonColourTexture;
-	const Heightmap = MoonDepthTexture;
-	
-	
-	const SetUniforms = function(Shader)
-	{
-		Shader.SetUniform('VertexRect',[0,0,1,1.0]);
-		Shader.SetUniform('ScreenToCameraTransform',ScreenToCameraTransform);
-		Shader.SetUniform('CameraToWorldTransform',CameraToWorldTransform);
-		Shader.SetUniform('LocalToWorldTransform',LocalToWorldTransform);
-		Shader.SetUniform('WorldToLocalTransform',WorldToLocalTransform);
-		Shader.SetUniform('HeightmapTexture',Heightmap);
-		Shader.SetUniform('ColourTexture',Colour);
-		
-		function SetUniform(Key)
-		{
-			Shader.SetUniform( Key, Params[Key] );
-		}
-		Object.keys(Params).forEach(SetUniform);
-	}
-	RenderTarget.SetBlendModeAlpha();
-	RenderTarget.DrawGeometry( Quad, Shader, SetUniforms );
-
+	const Cube = new Actor('Cube',Geo_Colour_Shader);
+	RenderActor(RenderTarget,Camrea,Cube);
 }
 
 
